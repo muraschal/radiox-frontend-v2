@@ -1,6 +1,6 @@
 
 import { createClient } from '@supabase/supabase-js';
-import { Show, Segment, TranscriptLine } from '../types';
+import { Show, Segment, TranscriptLine, Speaker } from '../types';
 
 // Safely access env vars or fallbacks
 const getEnv = (key: string, fallback: string) => {
@@ -83,12 +83,6 @@ const mapShowToShowWithSegments = (row: any): Show => {
   const id = row.id?.toString() || `show-${Math.random()}`;
   const title = getProperty(row, ['title', 'show_name', 'name']) || "Untitled Show";
   
-  // DEBUG LOGGING START
-  // console.log(`[RadioX Debug] Processing Show: ${title} (${id})`);
-  const rawNewsData = getProperty(row, ['used_news', 'news', 'chapters']);
-  // console.log(`[RadioX Debug] used_news found?`, !!rawNewsData, rawNewsData);
-  // DEBUG LOGGING END
-
   const date = getProperty(row, ['date', 'created_at']) ? new Date(getProperty(row, ['date', 'created_at'])).toLocaleDateString() : new Date().toISOString().split('T')[0];
   const coverUrl = getProperty(row, ['cover_url', 'image_url', 'thumbnail']) || "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=800&auto=format&fit=crop&q=60";
   const audioUrl = getProperty(row, ['audio_url', 'file_url', 'url']);
@@ -114,7 +108,38 @@ const mapShowToShowWithSegments = (row: any): Show => {
   const fullTranscript = parseRawTranscript(rawTranscriptData);
 
   // 3. GET TOPICS / CHAPTERS (Left Column Data)
-  const newsItems = Array.isArray(rawNewsData) ? rawNewsData : [];
+  const rawNewsData = getProperty(row, ['used_news', 'news', 'chapters']);
+  console.log(`[RadioX Debug] raw used_news for ${title}:`, rawNewsData);
+
+  let newsItems: any[] = [];
+
+  // FIX: Handle stringified JSON which Supabase sometimes returns
+  if (typeof rawNewsData === 'string' && rawNewsData.trim()) {
+      try {
+          // Check for "0 items" or other non-JSON strings that might crash parse
+          if (rawNewsData.includes('items') && !rawNewsData.includes('{') && !rawNewsData.includes('[')) {
+             console.warn('[RadioX Debug] used_news ignored (looks like summary string):', rawNewsData);
+          } else {
+             const parsed = JSON.parse(rawNewsData);
+             if (Array.isArray(parsed)) {
+                 newsItems = parsed;
+             } else if (typeof parsed === 'object' && parsed !== null) {
+                 // Try to find an array inside
+                 if (Array.isArray(parsed.news)) newsItems = parsed.news;
+                 else if (Array.isArray(parsed.chapters)) newsItems = parsed.chapters;
+             }
+          }
+      } catch (err) {
+          console.warn('[RadioX Debug] used_news JSON parse failed:', err);
+      }
+  } else if (Array.isArray(rawNewsData)) {
+      newsItems = rawNewsData;
+  } else if (typeof rawNewsData === 'object' && rawNewsData !== null) {
+       // Direct object access fallback
+       if (Array.isArray(rawNewsData.news)) newsItems = rawNewsData.news;
+       else if (Array.isArray(rawNewsData.chapters)) newsItems = rawNewsData.chapters;
+  }
+
   let finalSegments: Segment[] = [];
 
   if (newsItems.length > 0) {
@@ -174,9 +199,6 @@ const mapShowToShowWithSegments = (row: any): Show => {
       });
   } else {
       // FALLBACK: No 'used_news' found
-      // Log this event so developer knows why topics are missing
-      // console.warn(`[RadioX] No used_news found for show ${id}. Using fallback.`);
-      
       const totalDuration = parseFloat(getProperty(row, ['audio_duration_seconds', 'duration']) || "0");
       
       finalSegments = [{
@@ -235,5 +257,18 @@ export const api = {
     if (error || !data) return null;
 
     return mapShowToShowWithSegments(data);
+  },
+
+  async getSpeakers(): Promise<Speaker[]> {
+    const { data, error } = await supabase
+      .from('speaker_profiles')
+      .select('speaker_name, avatar_url');
+    
+    if (error || !data) return [];
+
+    return data.map(s => ({
+      name: s.speaker_name,
+      avatarUrl: s.avatar_url
+    }));
   }
 };

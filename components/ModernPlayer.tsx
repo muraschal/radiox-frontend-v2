@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { Play, Pause, SkipBack, SkipForward, User, Clock, Radio, Maximize2 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Play, Pause, SkipBack, SkipForward, Maximize2 } from 'lucide-react';
 import { Show } from '../types';
 
 interface ModernPlayerProps {
@@ -36,12 +36,28 @@ export const ModernPlayer: React.FC<ModernPlayerProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragValue, setDragValue] = useState(0);
 
+  // Calculate Total Show Duration based on segments (Global Timeline)
+  // Ensures robust duration even if last segment length is estimated
+  const totalShowDuration = useMemo(() => {
+     if (!show.segments || show.segments.length === 0) return 0;
+     
+     // Strategy 1: Use start time of last segment + its duration
+     const lastSeg = show.segments[show.segments.length - 1];
+     if (lastSeg.startTime !== undefined) {
+         return lastSeg.startTime + lastSeg.duration;
+     }
+     
+     // Strategy 2: Fallback to sum of all durations
+     return show.segments.reduce((acc, s) => acc + s.duration, 0);
+  }, [show.segments]);
+
   if (!segment) {
       return null;
   }
 
+  // Use Absolute Global Time for display and scrubbing
   const displayTime = isDragging ? dragValue : currentTime;
-  const duration = segment.duration || 0; 
+  const duration = totalShowDuration > 0 ? totalShowDuration : segment.duration; 
 
   const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setDragValue(Number(e.target.value));
@@ -63,13 +79,12 @@ export const ModernPlayer: React.FC<ModernPlayerProps> = ({
     <div className="fixed bottom-0 left-0 right-0 z-[60]">
       {/* 
         OPTIMIZED GLASS PLAYER
-        Layout Structure:
-        [ Info (Show + Segment) ] --- [ Controls ] --- [ Time/Status ]
+        Focus: Show Title, Host, Total Duration, Current Seconds
       */}
       <div className="bg-[#050505]/95 backdrop-blur-2xl border-t border-white/10 pb-8 pt-6 px-6 md:px-8 safe-area-bottom shadow-[0_-10px_40px_rgba(0,0,0,0.8)]">
         <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row items-center gap-6 md:gap-8 pb-2 md:pb-0">
             
-            {/* 1. Show & Segment Info (CLICKABLE) */}
+            {/* 1. Show & Host (CLICKABLE) - Primary Info */}
             <div 
                 className="flex items-center gap-5 w-full md:w-1/3 min-w-0 justify-start cursor-pointer group/info relative"
                 onClick={onShowDetails}
@@ -85,27 +100,25 @@ export const ModernPlayer: React.FC<ModernPlayerProps> = ({
                  </div>
 
                  <div className="flex flex-col min-w-0 text-center md:text-left w-full md:w-auto">
-                    {/* Top Row: Show Title & Host */}
-                    <div className="flex items-center justify-center md:justify-start gap-2 mb-0.5">
-                        <h3 className="text-white font-bold text-base leading-tight truncate group-hover/info:text-cyan-300 transition-colors">
-                           {show.title}
-                        </h3>
-                        <span className="hidden md:inline text-gray-600 text-xs">•</span>
-                        <div className="hidden md:flex items-center gap-1 text-gray-400 text-xs font-medium uppercase tracking-wide">
-                            <span className="truncate max-w-[120px]">{show.hosts}</span>
-                        </div>
-                    </div>
-
-                    {/* Bottom Row: Segment Info */}
-                    <div className="flex items-center justify-center md:justify-start gap-2 overflow-hidden">
-                        {segment.category && segment.category !== 'General' && (
-                             <span className="shrink-0 bg-cyan-900/40 text-cyan-300 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider border border-cyan-500/20">
-                                {segment.category}
-                             </span>
-                        )}
-                        <span className="text-gray-300 text-sm truncate font-medium">
-                           {segment.title}
+                    {/* Top Row: Show Title */}
+                    <h3 className="text-white font-bold text-lg leading-tight truncate group-hover/info:text-cyan-300 transition-colors mb-1">
+                       {show.title}
+                    </h3>
+                    
+                    {/* Bottom Row: Host Name */}
+                    <div className="flex items-center justify-center md:justify-start gap-2">
+                         <span className="text-cyan-400 text-sm font-medium uppercase tracking-wide truncate max-w-[200px]">
+                            {show.hosts}
                         </span>
+                        {/* Subtle segment indicator */}
+                        {segment.title && (
+                            <>
+                                <span className="hidden md:inline text-gray-600 text-xs">•</span>
+                                <span className="hidden md:inline text-gray-500 text-xs truncate max-w-[150px]">
+                                   {segment.title}
+                                </span>
+                            </>
+                        )}
                     </div>
                  </div>
             </div>
@@ -116,6 +129,7 @@ export const ModernPlayer: React.FC<ModernPlayerProps> = ({
                     onClick={() => activeSegmentIndex > 0 && onSegmentChange(activeSegmentIndex - 1)}
                     className="text-gray-400 hover:text-white transition-colors disabled:opacity-30 p-3 hover:bg-white/5 rounded-full"
                     disabled={activeSegmentIndex === 0}
+                    title="Previous Topic"
                 >
                     <SkipBack size={26} fill="currentColor" />
                 </button>
@@ -131,17 +145,18 @@ export const ModernPlayer: React.FC<ModernPlayerProps> = ({
                     onClick={() => activeSegmentIndex < show.segments.length - 1 && onSegmentChange(activeSegmentIndex + 1)}
                     className="text-gray-400 hover:text-white transition-colors disabled:opacity-30 p-3 hover:bg-white/5 rounded-full"
                     disabled={activeSegmentIndex === show.segments.length - 1}
+                    title="Next Topic"
                 >
                     <SkipForward size={26} fill="currentColor" />
                 </button>
             </div>
 
-            {/* 3. Time & Scrubber (Right) */}
+            {/* 3. Time & Duration (Right) */}
             <div className="flex flex-col justify-center w-full md:w-1/3 gap-3 order-3 md:order-none">
                 
                 {/* Time Labels */}
                 <div className="flex items-end justify-between font-mono font-bold px-1 tracking-wide">
-                     {/* Current Time */}
+                     {/* Current Seconds State */}
                      <div className="flex flex-col items-start">
                         <span className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Current</span>
                         <span className="text-xl text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] leading-none">
@@ -151,7 +166,7 @@ export const ModernPlayer: React.FC<ModernPlayerProps> = ({
                      
                      {/* Total Duration */}
                      <div className="flex flex-col items-end">
-                        <span className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Total</span>
+                        <span className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Total Duration</span>
                         <span className="text-lg text-gray-400 leading-none">
                             {formatTime(duration)}
                         </span>

@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { ArrowLeft, Play, Share2, Heart, ListMusic, BarChart3, ExternalLink, Info, Maximize2, X, FileText, Newspaper, MessageSquare, Users, Link2, Clock } from 'lucide-react';
-import { Show } from '../types';
+import { Show, Speaker } from '../types';
 import { MatrixBackground } from './MatrixBackground';
 import { SpeakerBlobs } from './SpeakerBlobs';
 
@@ -10,10 +10,11 @@ interface ShowDetailProps {
   activeSegmentId: string | null;
   onBack: () => void;
   onPlay: (segmentIndex: number) => void;
-  onSeek?: (time: number) => void; 
+  onSeek?: (time: number) => void;
+  speakers?: Speaker[];
 }
 
-export const ShowDetail: React.FC<ShowDetailProps> = ({ show, activeSegmentId, onBack, onPlay, onSeek }) => {
+export const ShowDetail: React.FC<ShowDetailProps> = ({ show, activeSegmentId, onBack, onPlay, onSeek, speakers = [] }) => {
   
   // Navigation & Player Logic
   const activeIndex = activeSegmentId 
@@ -64,6 +65,12 @@ export const ShowDetail: React.FC<ShowDetailProps> = ({ show, activeSegmentId, o
       if (url) {
           window.open(url, '_blank', 'noopener,noreferrer');
       }
+  };
+
+  // Helper to find avatar
+  const getAvatarUrl = (speakerName: string) => {
+      const found = speakers.find(s => s.name.toLowerCase() === speakerName.toLowerCase());
+      return found?.avatarUrl;
   };
 
   if (!displayedSegment) return null;
@@ -297,25 +304,46 @@ export const ShowDetail: React.FC<ShowDetailProps> = ({ show, activeSegmentId, o
                  <div className="flex-1 overflow-y-auto no-scrollbar scroll-smooth p-6 md:p-8" ref={transcriptRef}>
                     <div className="flex flex-col gap-6 max-w-3xl">
                         {displayedSegment.transcript && displayedSegment.transcript.length > 0 ? (
-                             displayedSegment.transcript.map((line, idx) => (
-                                <div 
-                                    key={idx} 
-                                    className="flex flex-col gap-1.5 group cursor-pointer hover:bg-white/5 p-2 rounded-lg -mx-2 transition-colors"
-                                    onClick={() => handleTranscriptClick(line.timestamp)}
-                                >
-                                    <div className="flex items-baseline gap-3">
-                                        <span className={`text-xs font-bold uppercase tracking-widest min-w-[60px] ${line.speaker.toLowerCase().includes('declan') ? 'text-cyan-600' : 'text-fuchsia-600'}`}>
-                                            {line.speaker}
-                                        </span>
-                                        <span className="text-[10px] text-gray-700 font-mono group-hover:text-cyan-500 transition-colors">
-                                            {Math.floor(line.timestamp / 60)}:{(Math.floor(line.timestamp) % 60).toString().padStart(2, '0')}
-                                        </span>
+                             displayedSegment.transcript.map((line, idx) => {
+                                 const avatarUrl = getAvatarUrl(line.speaker);
+                                 return (
+                                    <div 
+                                        key={idx} 
+                                        className="flex gap-4 group cursor-pointer hover:bg-white/5 p-2 rounded-lg -mx-2 transition-colors"
+                                        onClick={() => handleTranscriptClick(line.timestamp)}
+                                    >
+                                        {/* Avatar Column */}
+                                        <div className="shrink-0 pt-1">
+                                            {avatarUrl ? (
+                                                <img 
+                                                    src={avatarUrl} 
+                                                    alt={line.speaker} 
+                                                    className="w-10 h-10 rounded-full object-cover border border-white/10 shadow-sm"
+                                                />
+                                            ) : (
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold border border-white/10 ${line.speaker.toLowerCase().includes('declan') ? 'bg-cyan-900/50 text-cyan-300' : 'bg-fuchsia-900/50 text-fuchsia-300'}`}>
+                                                    {line.speaker.charAt(0)}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Text Column */}
+                                        <div className="flex flex-col gap-1.5 pt-0.5">
+                                            <div className="flex items-baseline gap-3">
+                                                <span className={`text-xs font-bold uppercase tracking-widest min-w-[60px] ${line.speaker.toLowerCase().includes('declan') ? 'text-cyan-600' : 'text-fuchsia-600'}`}>
+                                                    {line.speaker}
+                                                </span>
+                                                <span className="text-[10px] text-gray-700 font-mono group-hover:text-cyan-500 transition-colors">
+                                                    {Math.floor(line.timestamp / 60)}:{(Math.floor(line.timestamp) % 60).toString().padStart(2, '0')}
+                                                </span>
+                                            </div>
+                                            <p className="text-lg text-gray-300 leading-relaxed font-sans pl-0 group-hover:text-white transition-colors">
+                                                {line.text}
+                                            </p>
+                                        </div>
                                     </div>
-                                    <p className="text-lg text-gray-300 leading-relaxed font-sans pl-0 group-hover:text-white transition-colors">
-                                        {line.text}
-                                    </p>
-                                </div>
-                             ))
+                                 );
+                             })
                         ) : (
                              <div className="flex flex-col items-center justify-center h-full gap-4 opacity-50 text-center py-20">
                                  <FileText size={48} strokeWidth={1} />
