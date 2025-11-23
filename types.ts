@@ -38,8 +38,3 @@ export interface PlayerState {
   currentSegmentIndex: number;
   progress: number; // current time in segment
 }
-
-export interface Speaker {
-  name: string;
-  avatarUrl: string;
-}

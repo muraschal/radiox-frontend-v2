@@ -1,6 +1,6 @@
 
 import { createClient } from '@supabase/supabase-js';
-import { Show, Segment, TranscriptLine, Speaker } from '../types';
+import { Show, Segment, TranscriptLine } from '../types';
 
 // Safely access env vars or fallbacks
 const getEnv = (key: string, fallback: string) => {
@@ -70,6 +70,32 @@ const parseRawTranscript = (segmentsJson: any): TranscriptLine[] => {
   }
 };
 
+const parseNewsItems = (rawData: any): any[] => {
+  if (!rawData) return [];
+
+  if (Array.isArray(rawData)) {
+    return rawData;
+  }
+
+  if (typeof rawData === 'string') {
+    const trimmed = rawData.trim();
+    // Ignore empty strings or specific "0 items" string which is not JSON
+    if (!trimmed || trimmed === '0 items') {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn('[RadioX Debug] used_news JSON.parse failed', { rawData, error });
+      return [];
+    }
+  }
+
+  return [];
+};
+
 const getProperty = (obj: any, keys: string[]): any => {
     if (!obj) return null;
     for (const key of keys) {
@@ -108,38 +134,18 @@ const mapShowToShowWithSegments = (row: any): Show => {
   const fullTranscript = parseRawTranscript(rawTranscriptData);
 
   // 3. GET TOPICS / CHAPTERS (Left Column Data)
-  const rawNewsData = getProperty(row, ['used_news', 'news', 'chapters']);
-  console.log(`[RadioX Debug] raw used_news for ${title}:`, rawNewsData);
-
-  let newsItems: any[] = [];
-
-  // FIX: Handle stringified JSON which Supabase sometimes returns
-  if (typeof rawNewsData === 'string' && rawNewsData.trim()) {
-      try {
-          // Check for "0 items" or other non-JSON strings that might crash parse
-          if (rawNewsData.includes('items') && !rawNewsData.includes('{') && !rawNewsData.includes('[')) {
-             console.warn('[RadioX Debug] used_news ignored (looks like summary string):', rawNewsData);
-          } else {
-             const parsed = JSON.parse(rawNewsData);
-             if (Array.isArray(parsed)) {
-                 newsItems = parsed;
-             } else if (typeof parsed === 'object' && parsed !== null) {
-                 // Try to find an array inside
-                 if (Array.isArray(parsed.news)) newsItems = parsed.news;
-                 else if (Array.isArray(parsed.chapters)) newsItems = parsed.chapters;
-             }
-          }
-      } catch (err) {
-          console.warn('[RadioX Debug] used_news JSON parse failed:', err);
-      }
-  } else if (Array.isArray(rawNewsData)) {
-      newsItems = rawNewsData;
-  } else if (typeof rawNewsData === 'object' && rawNewsData !== null) {
-       // Direct object access fallback
-       if (Array.isArray(rawNewsData.news)) newsItems = rawNewsData.news;
-       else if (Array.isArray(rawNewsData.chapters)) newsItems = rawNewsData.chapters;
+  // FIX: Order changed to prioritize 'used_news' and 'chapters'. 'news' is last fallback.
+  const rawNewsData = getProperty(row, ['used_news', 'chapters', 'news']);
+  
+  // LOGGING: Output used_news to console for debugging as requested
+  if (rawNewsData) {
+      console.log(`[RadioX] used_news/chapters found for show ${id}:`, rawNewsData);
+  } else {
+      console.log(`[RadioX] No used_news/chapters found for show ${id}.`);
   }
 
+  // Use robust parser to handle JSON strings or empty results
+  const newsItems = parseNewsItems(rawNewsData);
   let finalSegments: Segment[] = [];
 
   if (newsItems.length > 0) {
@@ -199,6 +205,7 @@ const mapShowToShowWithSegments = (row: any): Show => {
       });
   } else {
       // FALLBACK: No 'used_news' found
+      
       const totalDuration = parseFloat(getProperty(row, ['audio_duration_seconds', 'duration']) || "0");
       
       finalSegments = [{
@@ -257,18 +264,5 @@ export const api = {
     if (error || !data) return null;
 
     return mapShowToShowWithSegments(data);
-  },
-
-  async getSpeakers(): Promise<Speaker[]> {
-    const { data, error } = await supabase
-      .from('speaker_profiles')
-      .select('speaker_name, avatar_url');
-    
-    if (error || !data) return [];
-
-    return data.map(s => ({
-      name: s.speaker_name,
-      avatarUrl: s.avatar_url
-    }));
   }
 };
