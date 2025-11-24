@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ModernPlayer } from './components/ModernPlayer';
 import { ShowCard } from './components/ShowCard';
 import { ShowDetail } from './components/ShowDetail';
-import { Show } from './types';
+import { Show, Speaker } from './types';
 import { Search, Loader2, RefreshCw, Radio, PlayCircle, Calendar, Clock, Sparkles } from 'lucide-react';
 import { api } from './services/apiService';
 import { MatrixBackground } from './components/MatrixBackground';
@@ -15,6 +15,7 @@ const App: React.FC = () => {
   
   // Data State
   const [shows, setShows] = useState<Show[]>([]);
+  const [speakers, setSpeakers] = useState<Speaker[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,19 +35,27 @@ const App: React.FC = () => {
   // Detail View State
   const [detailShow, setDetailShow] = useState<Show | null>(null);
 
-  const loadShows = async () => {
+  const loadData = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      const data = await api.getShows();
       
-      if (data && data.length > 0) {
+      // Fetch Shows and Speakers in parallel
+      const [showsData, speakersData] = await Promise.all([
+          api.getShows(),
+          api.getSpeakers()
+      ]);
+      
+      if (showsData && showsData.length > 0) {
           // Filter out broken shows (no segments/audio) to ensure the UI looks good
-          const validShows = data.filter(s => s.segments.length > 0);
+          const validShows = showsData.filter(s => s.segments.length > 0);
           setShows(validShows);
       } else {
           setShows([]);
       }
+
+      setSpeakers(speakersData || []);
+
     } catch (err: any) {
       console.error("API Error:", err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -58,7 +67,7 @@ const App: React.FC = () => {
 
   // --- INITIAL DATA FETCH ---
   useEffect(() => {
-    loadShows();
+    loadData();
   }, []);
 
   // --- AUDIO EFFECT LOGIC ---
@@ -144,6 +153,15 @@ const App: React.FC = () => {
   const handleCardClick = (show: Show) => {
     setDetailShow(show);
     setView('detail');
+    
+    // If nothing is currently loaded in the player, load this show (paused)
+    // so the player bar appears immediately in the detail view.
+    if (!currentShow) {
+        setCurrentShow(show);
+        setActiveSegmentIndex(0);
+        setIsPlaying(false);
+        // We do not auto-play, just load the state so the UI is "open"
+    }
   };
 
   const handlePlayShow = (show: Show, segmentIndex = 0) => {
@@ -220,7 +238,7 @@ const App: React.FC = () => {
                     <p className="text-red-400 font-mono text-xs break-all">{error}</p>
                 </div>
                 <button 
-                    onClick={loadShows}
+                    onClick={loadData}
                     className="mt-4 px-6 py-2 bg-white text-black rounded-full font-bold hover:bg-gray-200 transition-colors flex items-center gap-2"
                 >
                     <RefreshCw size={16} /> Retry
@@ -402,6 +420,8 @@ const App: React.FC = () => {
                 activeSegmentId={currentShow?.id === detailShow.id && currentSegment ? currentSegment.id : null}
                 onBack={handleBackToDashboard}
                 onPlay={(segmentIndex) => handlePlayShow(detailShow, segmentIndex)}
+                speakers={speakers}
+                currentTime={currentTime}
             />
           </div>
         )}
