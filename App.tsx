@@ -333,8 +333,16 @@ const App: React.FC = () => {
 
   // --- UI HANDLERS ---
 
-  const handleCardClick = (show: Show) => {
+  const handleCardClick = (show: Show, segmentIndex = 0) => {
+    if (!show.segments || show.segments.length === 0) return;
+
+    // Navigate to detail view with deeplink
     openShowDetailRoute(show);
+
+    // Start playback from the selected segment
+    setCurrentShow(show);
+    setActiveSegmentIndex(segmentIndex);
+    setIsPlaying(true);
   };
 
   const handlePlayShow = (show: Show, segmentIndex = 0) => {
@@ -522,17 +530,11 @@ const App: React.FC = () => {
 
                             <div className="flex items-center gap-4 mt-4">
                               <button
-                                onClick={() => handlePlayShow(show)}
+                                onClick={() => handleCardClick(show)}
                                 className="bg-cyan-400 hover:bg-cyan-300 text-black px-8 py-3 rounded-full font-bold flex items-center gap-2 transition-all hover:scale-105 shadow-[0_0_20px_rgba(34,211,238,0.3)]"
                               >
                                 <PlayCircle size={20} fill="black" />
                                 Listen Now
-                              </button>
-                              <button
-                                onClick={() => handleCardClick(show)}
-                                className="bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md text-white px-8 py-3 rounded-full font-bold transition-all"
-                              >
-                                Details
                               </button>
                             </div>
                           </div>
