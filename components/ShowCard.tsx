@@ -13,6 +13,18 @@ export const ShowCard: React.FC<ShowCardProps> = ({ data, isActive, onClick }) =
   // Calculate total duration from segments
   const totalDuration = data.segments.reduce((acc, seg) => acc + seg.duration, 0);
 
+  const createdAt = new Date(data.createdAt);
+  const archiveTimeLabel = isNaN(createdAt.getTime())
+    ? data.date
+    : `${createdAt.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      })} · ${createdAt.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`;
+
   return (
     <div 
       onClick={onClick}
@@ -53,9 +65,9 @@ export const ShowCard: React.FC<ShowCardProps> = ({ data, isActive, onClick }) =
           <span className="text-gray-500">{Math.ceil(totalDuration / 60)} min</span>
         </div>
 
-        {/* Footer Date */}
+        {/* Footer Date + Time (Archive view) */}
         <div className="mt-auto pt-3 border-t border-white/5 flex justify-between items-center text-xs text-gray-500 font-mono">
-          <span>{data.date}</span>
+          <span>{archiveTimeLabel}</span>
           <span className="bg-white/10 px-1.5 py-0.5 rounded">{data.segments.length} segs</span>
         </div>
       </div>

@@ -56,7 +56,18 @@ const mapShowToShowWithSegments = (row: any): Show => {
   // 1. BASIC METADATA
   const id = row.id?.toString() || `show-${Math.random()}`;
   const title = getProperty(row, ['title', 'show_name', 'name']) || "Untitled Show";
-  const date = getProperty(row, ['date', 'created_at']) ? new Date(getProperty(row, ['date', 'created_at'])).toLocaleDateString() : new Date().toISOString().split('T')[0];
+
+  // Use created_at (or date) as canonical release timestamp
+  const createdAtSource = getProperty(row, ['created_at', 'date']) || new Date().toISOString();
+  const createdAtDate = new Date(createdAtSource);
+  const createdAt = createdAtDate.toISOString();
+
+  // Human-readable local date (for quick label usage)
+  const date = createdAtDate.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
   const coverUrl = getProperty(row, ['cover_url', 'image_url', 'thumbnail']) || "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=800&auto=format&fit=crop&q=60";
   const audioUrl = getProperty(row, ['audio_url', 'file_url', 'url']);
   
@@ -110,6 +121,10 @@ const mapShowToShowWithSegments = (row: any): Show => {
 
   // 2. SEGMENT & TRANSCRIPT PARSING
   let finalSegments: Segment[] = [];
+
+  // Total audio duration (used for proper timing or as fallback when timestamps are missing)
+  const rawDuration = getProperty(row, ['audio_duration_seconds', 'duration', 'metadata.total_duration_seconds']);
+  const totalAudioDuration = rawDuration ? Number(rawDuration) : 0;
   
   // Parse 'segments' column if it is a JSON string
   let segmentsData = row.segments;
@@ -123,46 +138,116 @@ const mapShowToShowWithSegments = (row: any): Show => {
   // ---------------------------------------------------------
   if (segmentsData && typeof segmentsData === 'object' && Array.isArray(segmentsData.segments)) {
       
+      const segmentCount = segmentsData.segments.length || 1;
+      
       finalSegments = segmentsData.segments.map((seg: any, index: number) => {
           // A. Speaker Lines (Transcript)
           const lines = Array.isArray(seg.speaker_lines) ? seg.speaker_lines : [];
           
-          // B. Timing Calculation (Absolute)
-          const absStart = lines.length > 0 ? (lines[0].timestamp_start || 0) : 0;
-          const absEnd = lines.length > 0 ? (lines[lines.length - 1].timestamp_end || 0) : absStart;
-          const duration = Math.max(0, absEnd - absStart);
+          // B. Timing Calculation
+          // Prefer real timestamps if present. If everything is null (current V3 shows),
+          // synthesize a reasonable timeline based on totalAudioDuration and text length
+          const hasStructuredTimestamps =
+            (typeof seg.timestamp_start === 'number' && !isNaN(seg.timestamp_start)) ||
+            (typeof seg.timestamp_end === 'number' && !isNaN(seg.timestamp_end)) ||
+            lines.some((l: any) => typeof l.timestamp_start === 'number' && !isNaN(l.timestamp_start));
+
+          let absStart = 0;
+          let absEnd = 0;
+          let duration = 0;
+
+          if (hasStructuredTimestamps) {
+              // Use absolute timestamps as provided by backend
+              const firstLine = lines[0];
+              const lastLine = lines[lines.length - 1];
+              
+              const startCandidate = typeof seg.timestamp_start === 'number'
+                ? seg.timestamp_start
+                : (firstLine && typeof firstLine.timestamp_start === 'number' ? firstLine.timestamp_start : 0);
+
+              const endCandidate = typeof seg.timestamp_end === 'number'
+                ? seg.timestamp_end
+                : (lastLine && typeof lastLine.timestamp_end === 'number' ? lastLine.timestamp_end : startCandidate);
+
+              absStart = Number(startCandidate) || 0;
+              absEnd = Number(endCandidate) || absStart;
+              duration = Math.max(0, absEnd - absStart);
+          } else {
+              // Fallback: distribute show duration evenly across segments
+              const safeSegmentDuration =
+                totalAudioDuration > 0 && segmentCount > 0
+                  ? totalAudioDuration / segmentCount
+                  : 60; // 60s per segment as hard fallback
+              
+              duration = safeSegmentDuration;
+              absStart = index * safeSegmentDuration;
+              absEnd = absStart + safeSegmentDuration;
+          }
 
           // C. Transcript Normalization (Absolute -> Relative)
           // UI expects timestamps relative to the segment start (0...duration)
-          const transcript: TranscriptLine[] = lines.map((l: any) => ({
-             speaker: l.speaker || 'Unknown',
-             text: l.text || '',
-             timestamp: Math.max(0, (l.timestamp_start || 0) - absStart) 
-          }));
+          const perLineDuration = lines.length > 0 ? duration / lines.length : duration;
+          const transcript: TranscriptLine[] = lines.map((l: any, lineIndex: number) => {
+              const baseTimestamp = hasStructuredTimestamps
+                ? Math.max(0, Number(l.timestamp_start || 0) - absStart)
+                : lineIndex * perLineDuration;
+              
+              return {
+                speaker: l.speaker || 'Unknown',
+                text: l.text || '',
+                timestamp: baseTimestamp
+              };
+          });
 
           // D. Source Extraction & Image Lookup
           let sourceUrl = undefined;
           let sourceName = undefined;
+          let articleTitle = undefined;
+          let sourcePublishedAt = undefined;
           let articleImageUrl = getProperty(seg, ['image_url', 'image', 'thumbnail']);
 
           if (Array.isArray(seg.sources)) {
               // Flatten sources if it's an array of strings
               const sources = seg.sources;
-              
-              // Find first valid URL
+
+              // Prefer the first structured source object (for metadata)
+              const primarySource = sources.find((s: any) => s && typeof s === 'object');
+
+              // Find first valid URL on any source entry
               const urlItem = sources.find((s: any) => {
                   if (typeof s === 'string' && s.startsWith('http')) return true;
-                  if (s && s.content_item_id && typeof s.content_item_id === 'string' && s.content_item_id.startsWith('http')) return true;
+                  if (s && typeof s === 'object') {
+                      if (typeof s.url === 'string' && s.url.startsWith('http')) return true;
+                      if (typeof s.link === 'string' && s.link.startsWith('http')) return true;
+                      if (typeof s.article_url === 'string' && s.article_url.startsWith('http')) return true;
+                      if (typeof s.web_link === 'string' && s.web_link.startsWith('http')) return true;
+                      if (typeof s.content_item_id === 'string' && s.content_item_id.startsWith('http')) return true;
+                  }
                   return false;
               });
 
               if (urlItem) {
                    if (typeof urlItem === 'string') sourceUrl = urlItem;
-                   else sourceUrl = urlItem.content_item_id;
+                   else sourceUrl = urlItem.url || urlItem.link || urlItem.article_url || urlItem.web_link || urlItem.content_item_id;
               }
 
-              // Extract Source Name
-              if (sourceUrl) {
+              // Extract Source Name & Additional Metadata
+              if (primarySource && typeof primarySource === 'object') {
+                  articleTitle = getProperty(primarySource, ['title', 'headline']);
+                  sourcePublishedAt = getProperty(primarySource, ['published_at', 'date']);
+                  if (!sourceName) {
+                      sourceName = getProperty(primarySource, ['source_name', 'source', 'publisher', 'outlet']);
+                  }
+                  // Fallback: derive URL from primarySource if we haven't found one yet
+                  if (!sourceUrl) {
+                      const candidateUrl = getProperty(primarySource, ['url', 'link', 'article_url', 'web_link', 'content_item_id']);
+                      if (typeof candidateUrl === 'string' && candidateUrl.startsWith('http')) {
+                          sourceUrl = candidateUrl;
+                      }
+                  }
+              }
+
+              if (sourceUrl && !sourceName) {
                   try {
                       const u = new URL(sourceUrl);
                       sourceName = u.hostname.replace('www.', '').split('.')[0];
@@ -196,6 +281,8 @@ const mapShowToShowWithSegments = (row: any): Show => {
               sourceUrl,
               sourceName: sourceName || 'Topic',
               articleDescription: "", // Structured segments v1 usually don't have summaries per segment yet
+              articleTitle,
+              sourcePublishedAt,
               articleImageUrl: articleImageUrl, 
               transcript,
               audioUrl
@@ -255,7 +342,9 @@ const mapShowToShowWithSegments = (row: any): Show => {
                   startTime: startTime,
                   sourceUrl: getProperty(news, ['link', 'url', 'article_url', 'web_link']),
                   sourceName: getProperty(news, ['source', 'publisher', 'outlet']) || "Source",
-                  articleDescription: getProperty(news, ['summary', 'description', 'content']),
+              articleDescription: getProperty(news, ['summary', 'description', 'content']),
+              articleTitle: getProperty(news, ['title', 'headline']),
+              sourcePublishedAt: getProperty(news, ['published_at', 'date']),
                   articleImageUrl: getProperty(news, ['image_url', 'image', 'thumbnail', 'url_to_image']), 
                   audioUrl: audioUrl,
                   transcript: chapterTranscript
@@ -290,9 +379,11 @@ const mapShowToShowWithSegments = (row: any): Show => {
     title,
     hosts,
     date,
+    createdAt,
     coverUrl,
     description,
     longDescription: description,
+    totalDuration: totalAudioDuration > 0 ? totalAudioDuration : undefined,
     segments: finalSegments
   };
 };

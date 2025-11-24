@@ -37,13 +37,18 @@ export const ModernPlayer: React.FC<ModernPlayerProps> = ({
   const [dragValue, setDragValue] = useState(0);
 
   const totalShowDuration = useMemo(() => {
+     // Prefer explicit total show duration from backend if available
+     if (show.totalDuration && !isNaN(show.totalDuration)) {
+       return show.totalDuration;
+     }
+     // Fallback: derive from segments (legacy shows)
      if (!show.segments || show.segments.length === 0) return 0;
      const lastSeg = show.segments[show.segments.length - 1];
      if (lastSeg.startTime !== undefined) {
          return lastSeg.startTime + lastSeg.duration;
      }
      return show.segments.reduce((acc, s) => acc + s.duration, 0);
-  }, [show.segments]);
+  }, [show.totalDuration, show.segments]);
 
   if (!segment) {
       return null;

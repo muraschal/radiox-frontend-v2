@@ -16,6 +16,8 @@ export interface Segment {
   // New metadata fields for the source article
   articleImageUrl?: string;
   articleDescription?: string;
+  articleTitle?: string;
+  sourcePublishedAt?: string;
   transcript?: TranscriptLine[];
   audioUrl?: string; // URL for the actual audio file
 }
@@ -24,11 +26,21 @@ export interface Show {
   id: string;
   title: string;
   hosts: string;
+  /**
+   * Human-readable date string (e.g. 24.11.2025) for quick display.
+   * Derived from createdAt.
+   */
   date: string;
+  /**
+   * ISO timestamp of when the show was created/released.
+   * Used for relative "vor X Minuten" labels and precise HH:MM formatting.
+   */
+  createdAt: string;
   coverUrl: string;
   description: string;
   longDescription?: string; // Detailed description for the "About" section
   tags?: string[]; // SEO tags
+  totalDuration?: number;
   segments: Segment[];
 }
 

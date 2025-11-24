@@ -34,6 +34,86 @@ const App: React.FC = () => {
 
   // Detail View State
   const [detailShow, setDetailShow] = useState<Show | null>(null);
+  const hasSyncedInitialRouteRef = useRef(false);
+
+  // Hero slider state (for the latest shows)
+  const [heroIndex, setHeroIndex] = useState(0);
+
+  // --- TIME & DATE HELPERS ---
+  const getRelativeReleaseLabel = (show: Show) => {
+    if (!show.createdAt) return '';
+    const created = new Date(show.createdAt);
+    if (isNaN(created.getTime())) return '';
+
+    const diffMs = Date.now() - created.getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMinutes / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMinutes < 1) return 'gerade eben veröffentlicht';
+    if (diffMinutes < 60) {
+      if (diffMinutes === 1) return 'vor 1 Minute veröffentlicht';
+      return `vor ${diffMinutes} Minuten veröffentlicht`;
+    }
+    if (diffHours < 24) {
+      if (diffHours === 1) return 'vor 1 Stunde veröffentlicht';
+      return `vor ${diffHours} Stunden veröffentlicht`;
+    }
+    if (diffDays === 1) return 'vor 1 Tag veröffentlicht';
+    return `vor ${diffDays} Tagen veröffentlicht`;
+  };
+
+  // --- SEO-FRIENDLY URL HELPERS ---
+  const createShowSlug = (show: Show) => {
+    // e.g. "Zürich - Night" + "24.11.2025" -> "zurich-night-24-11-2025"
+    const base = `${show.title}-${show.date}`
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, ''); // remove accents
+
+    return base
+      .replace(/[^a-z0-9]+/g, '-') // non alphanumerics -> "-"
+      .replace(/^-+|-+$/g, ''); // trim dashes
+  };
+
+  const parseShowRoute = (path: string) => {
+    // Expected pattern: /shows/:slug/:id
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length >= 3 && parts[0] === 'shows') {
+      return {
+        slug: parts[1],
+        id: parts[2],
+      };
+    }
+    return null;
+  };
+
+  const openShowDetailRoute = (show: Show) => {
+    const slug = createShowSlug(show);
+    const targetPath = `/shows/${slug}/${show.id}`;
+
+    if (typeof window !== 'undefined' && window.location.pathname !== targetPath) {
+      window.history.pushState(null, '', targetPath);
+    }
+
+    setDetailShow(show);
+    setView('detail');
+
+    // If the global player is not yet bound to a show, attach it to this one (paused)
+    if (!currentShow) {
+      setCurrentShow(show);
+      setActiveSegmentIndex(0);
+      setIsPlaying(false);
+    }
+  };
+
+  const openDashboardRoute = () => {
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.history.pushState(null, '', '/');
+    }
+    setView('dashboard');
+    setDetailShow(null);
+  };
 
   const loadData = async () => {
     try {
@@ -69,6 +149,109 @@ const App: React.FC = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  // --- INITIAL ROUTE SYNC (DEEPLINK HANDLING) ---
+  useEffect(() => {
+    if (hasSyncedInitialRouteRef.current || isLoading) return;
+    hasSyncedInitialRouteRef.current = true;
+
+    if (typeof window === 'undefined') return;
+
+    const route = parseShowRoute(window.location.pathname);
+    if (!route) {
+      return;
+    }
+
+    const sync = async () => {
+      let targetShow = shows.find((s) => s.id === route.id) || null;
+      if (!targetShow) {
+        try {
+          const fetched = await api.getShowById(route.id);
+          targetShow = fetched;
+        } catch {
+          targetShow = null;
+        }
+      }
+
+      if (targetShow) {
+        setDetailShow(targetShow);
+        setView('detail');
+        if (!currentShow) {
+          setCurrentShow(targetShow);
+          setActiveSegmentIndex(0);
+          setIsPlaying(false);
+        }
+      } else {
+        // Fallback: go to dashboard if show id is unknown
+        openDashboardRoute();
+      }
+    };
+
+    sync();
+  }, [isLoading, shows, currentShow]);
+
+  // --- POPSTATE HANDLING (BACK/FORWARD BUTTONS) ---
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handler = () => {
+      const route = parseShowRoute(window.location.pathname);
+      if (!route) {
+        openDashboardRoute();
+        return;
+      }
+
+      let targetShow = shows.find((s) => s.id === route.id) || null;
+
+      const applyShow = (show: Show | null) => {
+        if (!show) {
+          openDashboardRoute();
+          return;
+        }
+        setDetailShow(show);
+        setView('detail');
+        if (!currentShow) {
+          setCurrentShow(show);
+          setActiveSegmentIndex(0);
+          setIsPlaying(false);
+        }
+      };
+
+      if (targetShow) {
+        applyShow(targetShow);
+      } else {
+        api.getShowById(route.id).then((fetched) => applyShow(fetched));
+      }
+    };
+
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
+  }, [shows, currentShow]);
+
+  // --- HERO SLIDER AUTO-ADVANCE (TOP 3 SHOWS) ---
+  const heroCount = Math.min(shows.length, 3);
+
+  // Keep current slide index in range when show list changes
+  useEffect(() => {
+    if (heroCount === 0) {
+      if (heroIndex !== 0) setHeroIndex(0);
+      return;
+    }
+    if (heroIndex >= heroCount) {
+      setHeroIndex(0);
+    }
+  }, [heroCount, heroIndex]);
+
+  // Auto-rotate between the latest shows
+  useEffect(() => {
+    if (heroCount <= 1 || typeof window === 'undefined') return;
+
+    const timer = window.setInterval(() => {
+      setHeroIndex((prev) => (prev + 1) % heroCount);
+    }, 8000);
+
+    return () => window.clearInterval(timer);
+  }, [heroCount]);
 
   // --- AUDIO EFFECT LOGIC ---
   useEffect(() => {
@@ -151,17 +334,7 @@ const App: React.FC = () => {
   // --- UI HANDLERS ---
 
   const handleCardClick = (show: Show) => {
-    setDetailShow(show);
-    setView('detail');
-    
-    // If nothing is currently loaded in the player, load this show (paused)
-    // so the player bar appears immediately in the detail view.
-    if (!currentShow) {
-        setCurrentShow(show);
-        setActiveSegmentIndex(0);
-        setIsPlaying(false);
-        // We do not auto-play, just load the state so the UI is "open"
-    }
+    openShowDetailRoute(show);
   };
 
   const handlePlayShow = (show: Show, segmentIndex = 0) => {
@@ -192,21 +365,24 @@ const App: React.FC = () => {
   };
 
   const handleBackToDashboard = () => {
-    setView('dashboard');
-    setDetailShow(null);
+    openDashboardRoute();
   };
   
   const handlePlayerDetailsClick = () => {
       if (currentShow) {
-          setDetailShow(currentShow);
-          setView('detail');
+          openShowDetailRoute(currentShow);
       }
   };
 
-  // --- SHOW SPLITTING FOR LAYOUT (Focus on Top 3) ---
-  const heroShow = shows.length > 0 ? shows[0] : null;
-  const recentShows = shows.length > 1 ? shows.slice(1, 3) : [];
-  const archiveShows = shows.length > 3 ? shows.slice(3) : [];
+  // --- SHOW SPLITTING FOR LAYOUT & HERO SLIDER ---
+  const heroShows = shows.slice(0, heroCount);
+  const heroShow =
+    heroShows.length > 0 ? heroShows[Math.min(heroIndex, heroShows.length - 1)] : null;
+
+  // After the top 3 (slider), show the next 2 as "Just In", rest goes to Archive
+  const recentShows = shows.length > heroCount ? shows.slice(heroCount, heroCount + 2) : [];
+  const archiveStartIndex = heroCount + recentShows.length;
+  const archiveShows = shows.length > archiveStartIndex ? shows.slice(archiveStartIndex) : [];
 
   // --- LOADING SCREEN ---
   if (isLoading && shows.length === 0) {
@@ -298,51 +474,122 @@ const App: React.FC = () => {
             
             {heroShow ? (
               <>
-                {/* --- 1. HERO SECTION (Latest Show) --- */}
-                <div className="relative w-full aspect-[4/3] md:aspect-[21/9] lg:max-h-[60vh] overflow-hidden group">
-                    <img 
-                        src={heroShow.coverUrl} 
-                        alt="Hero" 
-                        className="w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-[2s]"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/40 to-transparent"></div>
-                    <div className="absolute inset-0 bg-gradient-to-r from-[#050505] via-transparent to-transparent"></div>
-                    
-                    <div className="absolute bottom-0 left-0 p-6 md:p-12 lg:p-16 w-full md:w-2/3 lg:w-1/2 flex flex-col items-start gap-4">
-                        <span className="flex items-center gap-2 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-3 py-1 rounded text-xs font-bold uppercase tracking-widest backdrop-blur-md animate-pulse">
-                            <Sparkles size={12} /> Premiering Now
-                        </span>
-                        
-                        <h1 className="text-4xl md:text-5xl lg:text-7xl font-bold text-white leading-none shadow-black drop-shadow-lg">
-                            {heroShow.title}
-                        </h1>
-                        
-                        <div className="flex items-center gap-4 text-gray-300 text-sm md:text-base font-medium">
-                            <span className="flex items-center gap-2"><Calendar size={16}/> {heroShow.date}</span>
-                            <span className="w-1 h-1 bg-gray-500 rounded-full"></span>
-                            <span>{heroShow.hosts}</span>
-                        </div>
-                        
-                        <p className="text-gray-400 text-sm md:text-lg line-clamp-2 md:line-clamp-3 max-w-xl">
-                            {heroShow.description}
-                        </p>
+                {/* --- 1. HERO SLIDER (Latest 3 Shows) --- */}
+                <div className="relative w-full aspect-[4/3] md:aspect-[21/9] lg:max-h-[60vh] overflow-hidden">
+                  {heroShows.map((show, index) => {
+                    const isActive = index === heroIndex;
+                    return (
+                      <div
+                        key={show.id}
+                        className={`absolute inset-0 transition-opacity duration-[900ms] ease-out ${
+                          isActive ? 'opacity-100 z-20' : 'opacity-0 z-10 pointer-events-none'
+                        }`}
+                      >
+                        <div className="relative w-full h-full group">
+                          <img
+                            src={show.coverUrl}
+                            alt={show.title}
+                            className="w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-[2000ms]"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/40 to-transparent" />
+                          <div className="absolute inset-0 bg-gradient-to-r from-[#050505] via-transparent to-transparent" />
 
-                        <div className="flex items-center gap-4 mt-4">
-                            <button 
-                                onClick={() => handlePlayShow(heroShow)}
+                          <div className="absolute bottom-0 left-0 p-6 md:p-12 lg:p-16 w-full md:w-2/3 lg:w-1/2 flex flex-col items-start gap-4">
+                            <span className="flex items-center gap-2 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-3 py-1 rounded text-xs font-bold uppercase tracking-widest backdrop-blur-md">
+                              <Sparkles size={12} /> {index === 0 ? 'Premiering Now' : 'Latest Show'}
+                            </span>
+
+                            <h1 className="text-4xl md:text-5xl lg:text-7xl font-bold text-white leading-none shadow-black drop-shadow-lg">
+                              {show.title}
+                            </h1>
+
+                            <div className="flex flex-col gap-1 text-gray-300 text-sm md:text-base font-medium">
+                              <div className="flex items-center gap-4">
+                                <span className="flex items-center gap-2">
+                                  <Calendar size={16} /> {show.date}
+                                </span>
+                                <span className="w-1 h-1 bg-gray-500 rounded-full"></span>
+                                <span>{show.hosts}</span>
+                              </div>
+                              <span className="text-xs md:text-sm text-gray-400">
+                                {getRelativeReleaseLabel(show)}
+                              </span>
+                            </div>
+
+                            <p className="text-gray-400 text-sm md:text-lg line-clamp-2 md:line-clamp-3 max-w-xl">
+                              {show.description}
+                            </p>
+
+                            <div className="flex items-center gap-4 mt-4">
+                              <button
+                                onClick={() => handlePlayShow(show)}
                                 className="bg-cyan-400 hover:bg-cyan-300 text-black px-8 py-3 rounded-full font-bold flex items-center gap-2 transition-all hover:scale-105 shadow-[0_0_20px_rgba(34,211,238,0.3)]"
-                            >
+                              >
                                 <PlayCircle size={20} fill="black" />
                                 Listen Now
-                            </button>
-                            <button 
-                                onClick={() => handleCardClick(heroShow)}
+                              </button>
+                              <button
+                                onClick={() => handleCardClick(show)}
                                 className="bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md text-white px-8 py-3 rounded-full font-bold transition-all"
-                            >
+                              >
                                 Details
-                            </button>
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                    </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Slider Controls */}
+                  {heroShows.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setHeroIndex((prev) =>
+                            heroShows.length ? (prev - 1 + heroShows.length) % heroShows.length : 0
+                          )
+                        }
+                        className="absolute left-4 md:left-6 top-1/2 -translate-y-1/2 z-30 p-2 rounded-full bg-black/40 hover:bg-black/70 text-white border border-white/10 backdrop-blur-md"
+                        aria-label="Previous show"
+                      >
+                        <span aria-hidden="true" className="text-lg leading-none">
+                          ‹
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setHeroIndex((prev) =>
+                            heroShows.length ? (prev + 1) % heroShows.length : 0
+                          )
+                        }
+                        className="absolute right-4 md:right-6 top-1/2 -translate-y-1/2 z-30 p-2 rounded-full bg-black/40 hover:bg-black/70 text-white border border-white/10 backdrop-blur-md"
+                        aria-label="Next show"
+                      >
+                        <span aria-hidden="true" className="text-lg leading-none">
+                          ›
+                        </span>
+                      </button>
+
+                      <div className="absolute inset-x-0 bottom-4 md:bottom-6 flex items-center justify-center gap-2 z-30">
+                        {heroShows.map((show, index) => (
+                          <button
+                            key={`${show.id}-${index}`}
+                            type="button"
+                            onClick={() => setHeroIndex(index)}
+                            className={`h-1.5 rounded-full transition-all ${
+                              index === heroIndex
+                                ? 'w-8 bg-white'
+                                : 'w-3 bg-white/40 hover:bg-white/80'
+                            }`}
+                            aria-label={`Show ${index + 1}`}
+                          />
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* --- 2. JUST IN (Shows 2 & 3) --- */}
