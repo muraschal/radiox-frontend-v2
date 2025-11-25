@@ -88,6 +88,17 @@ const mapShowToShowWithSegments = (row: any): Show => {
                       getProperty(row, ['seo_description', 'description', 'summary', 'script_preview']) || 
                       "No description available.";
 
+  // TAGS / FILTER METADATA (e.g. show key, categories)
+  const tags: string[] = [];
+  const showKey = row.metadata?.show_name || row.show_name || title;
+  if (showKey) tags.push(String(showKey));
+  const metaCategories = row.metadata?.categories;
+  if (Array.isArray(metaCategories)) {
+      metaCategories.forEach((c: any) => {
+          if (c) tags.push(String(c));
+      });
+  }
+
   // 0. PREPARE IMAGE LOOKUP MAP (From used_news/raw metadata)
   // Structured segments often miss images, so we look them up from the raw input data
   const articleImages: Record<string, string> = {};
@@ -384,6 +395,7 @@ const mapShowToShowWithSegments = (row: any): Show => {
     description,
     longDescription: description,
     totalDuration: totalAudioDuration > 0 ? totalAudioDuration : undefined,
+    tags: tags.length > 0 ? tags : undefined,
     segments: finalSegments
   };
 };

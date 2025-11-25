@@ -39,6 +39,12 @@ const App: React.FC = () => {
   // Hero slider state (for the latest shows)
   const [heroIndex, setHeroIndex] = useState(0);
 
+  // Archive "Älter" lazy loading
+  const [olderVisibleCount, setOlderVisibleCount] = useState(12);
+
+  // Archive filters (per show type)
+  const [archiveShowFilter, setArchiveShowFilter] = useState<string>('all');
+
   // --- TIME & DATE HELPERS ---
   const getRelativeReleaseLabel = (show: Show) => {
     if (!show.createdAt) return '';
@@ -387,10 +393,46 @@ const App: React.FC = () => {
   const heroShow =
     heroShows.length > 0 ? heroShows[Math.min(heroIndex, heroShows.length - 1)] : null;
 
-  // After the top 3 (slider), show the next 2 as "Just In", rest goes to Archive
+  // After the top 3 (slider), show the next 2 as "Just In"
   const recentShows = shows.length > heroCount ? shows.slice(heroCount, heroCount + 2) : [];
-  const archiveStartIndex = heroCount + recentShows.length;
-  const archiveShows = shows.length > archiveStartIndex ? shows.slice(archiveStartIndex) : [];
+  const archiveBaseShows = shows; // full list for archive time views
+
+  // --- ARCHIVE FILTERING & GROUPING ---
+  const allShowTagFilters: string[] = Array.from(
+    new Set(
+      shows
+        .map((s) => (s.tags && s.tags.length > 0 ? s.tags[0] : null))
+        .filter((t): t is string => !!t)
+    )
+  );
+
+  const now = new Date();
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+  const archiveFilteredByShow =
+    archiveShowFilter === 'all'
+      ? archiveBaseShows
+      : archiveBaseShows.filter((show) => show.tags && show.tags.includes(archiveShowFilter));
+
+  const archiveToday = archiveFilteredByShow.filter((show) => {
+    const created = new Date(show.createdAt);
+    return created.toDateString() === now.toDateString();
+  });
+
+  const archiveThisWeek = archiveFilteredByShow.filter((show) => {
+    const created = new Date(show.createdAt);
+    const diffDays = (now.getTime() - created.getTime()) / MS_PER_DAY;
+    return diffDays < 7 && created.toDateString() !== now.toDateString();
+  });
+
+  const archiveOlder = archiveFilteredByShow.filter((show) => {
+    const created = new Date(show.createdAt);
+    const diffDays = (now.getTime() - created.getTime()) / MS_PER_DAY;
+    return diffDays >= 7;
+  });
+
+  // Slice of "Älter" shows that is currently visible (lazy load as user scrolls)
+  const visibleOlderShows = archiveOlder.slice(0, olderVisibleCount);
 
   // --- LOADING SCREEN ---
   if (isLoading && shows.length === 0) {
@@ -633,24 +675,119 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* --- 3. ARCHIVE (The rest) --- */}
-                {archiveShows.length > 0 && (
+                {/* --- 3. ARCHIVE (Heute / Diese Woche / Älter) --- */}
+                {archiveBaseShows.length > 0 && (
                   <div className="px-6 md:px-12 mt-16">
-                     <div className="flex items-center gap-4 mb-8">
+                     <div className="flex items-center gap-4 mb-4">
                         <h3 className="text-lg font-bold text-gray-400 uppercase tracking-widest">Archive</h3>
                         <div className="h-[1px] flex-1 bg-white/5"></div>
                      </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
-                      {archiveShows.map((show) => (
-                          <ShowCard 
-                          key={show.id} 
-                          data={show} 
-                          isActive={currentShow?.id === show.id}
-                          onClick={() => handleCardClick(show)}
-                          />
-                      ))}
-                    </div>
+                     {/* Archive Show-Type Filters */}
+                     {allShowTagFilters.length > 1 && (
+                       <div className="flex flex-wrap items-center gap-2 mb-6">
+                         <span className="text-[11px] uppercase tracking-widest text-gray-500 mr-2">
+                           Shows
+                         </span>
+                         <button
+                           type="button"
+                           onClick={() => setArchiveShowFilter('all')}
+                           className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                             archiveShowFilter === 'all'
+                               ? 'bg-cyan-400 text-black border-cyan-400'
+                               : 'bg-transparent border-white/10 text-gray-400 hover:bg-white/5 hover:text-white'
+                           }`}
+                         >
+                           Alle
+                         </button>
+                         {allShowTagFilters.map((tag) => (
+                           <button
+                             key={tag}
+                             type="button"
+                             onClick={() => setArchiveShowFilter(tag)}
+                             className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                               archiveShowFilter === tag
+                                 ? 'bg-cyan-400 text-black border-cyan-400'
+                                 : 'bg-transparent border-white/10 text-gray-400 hover:bg-white/5 hover:text-white'
+                             }`}
+                           >
+                             {tag}
+                           </button>
+                         ))}
+                       </div>
+                     )}
+
+                     {/* Heute */}
+                     {archiveToday.length > 0 && (
+                       <section className="mb-8">
+                         <h4 className="text-sm font-bold text-gray-300 uppercase tracking-widest mb-3">
+                           Heute
+                         </h4>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+                           {archiveToday.map((show) => (
+                             <ShowCard
+                               key={show.id}
+                               data={show}
+                               isActive={currentShow?.id === show.id}
+                               onClick={() => handleCardClick(show)}
+                             />
+                           ))}
+                         </div>
+                       </section>
+                     )}
+
+                     {/* Diese Woche */}
+                     {archiveThisWeek.length > 0 && (
+                       <section className="mb-8">
+                         <h4 className="text-sm font-bold text-gray-300 uppercase tracking-widest mb-3">
+                           Diese Woche
+                         </h4>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+                           {archiveThisWeek.map((show) => (
+                             <ShowCard
+                               key={show.id}
+                               data={show}
+                               isActive={currentShow?.id === show.id}
+                               onClick={() => handleCardClick(show)}
+                             />
+                           ))}
+                         </div>
+                       </section>
+                     )}
+
+                     {/* Älter (lazy-loaded slice) */}
+                     {archiveOlder.length > 0 && (
+                       <section className="mb-4">
+                         <h4 className="text-sm font-bold text-gray-300 uppercase tracking-widest mb-3">
+                           Älter
+                         </h4>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+                           {visibleOlderShows.map((show) => (
+                             <ShowCard
+                               key={show.id}
+                               data={show}
+                               isActive={currentShow?.id === show.id}
+                               onClick={() => handleCardClick(show)}
+                             />
+                           ))}
+                         </div>
+                         {visibleOlderShows.length < archiveOlder.length && (
+                           <div className="flex justify-center mt-4">
+                             <button
+                               type="button"
+                               onClick={() =>
+                                 setOlderVisibleCount((prev) =>
+                                   Math.min(prev + 10, archiveOlder.length)
+                                 )
+                               }
+                               className="px-4 py-2 rounded-full text-xs font-semibold border border-white/30 text-gray-200 hover:bg-white/10 transition-colors"
+                             >
+                               Mehr laden
+                             </button>
+                           </div>
+                         )}
+                       </section>
+                     )}
                   </div>
                 )}
               </>
